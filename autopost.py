@@ -1,202 +1,158 @@
 #!/usr/bin/env python3
-"""Grounded Labs autopost: heads-up + publish for IG and FB Reels.
+"""Grounded Labs autopost: our own scheduler/poster for IG, FB, X, TikTok, YouTube, LinkedIn.
 
-Runs on GitHub Actions cron. Reads schedule.yaml, sends a push 1 hour before
-each post (ntfy), publishes when due, posts first comments, then records
-results in state/state.json and pushes a confirmation or an error alert.
-
-Secrets (GitHub Actions):
-  META_PAGE_TOKEN   long-lived Page access token (never-expiring)
-  FB_PAGE_ID        Facebook Page id
-  IG_USER_ID        Instagram business account id
-  NTFY_TOPIC        private ntfy.sh topic name for push notifications
+Runs on GitHub Actions every 15 min. For each APPROVED post in schedule.yaml:
+  1. ~1 hour before each time slot: ntfy push to Grayson (exact file + platforms + who posts what).
+  2. When due: publish on every configured platform; record in state/state.json (no doubles).
+  3. Push "Posted" with links, or "FAILED" with the error. TikTok upload mode pushes "tap Post".
+Platforms whose API isn't set up yet are reported as MANUAL in the heads-up and skipped.
 """
 import datetime as dt
 import json
 import os
 import sys
-import time
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import requests
 import yaml
 
+from connectors import linkedin, meta, tiktok, x, youtube
+from validate import validate
+
 ROOT = Path(__file__).parent
 TZ = ZoneInfo("America/Chicago")
-GRAPH = "https://graph.facebook.com/v25.0"
-RUPLOAD = "https://rupload.facebook.com"
-HEADS_UP_MIN = 60          # send heads-up this many minutes before
-LATE_LIMIT_MIN = 180       # don't publish if more than 3h late (alert instead)
+HEADS_UP_MIN = 60
+LATE_LIMIT_MIN = 180
 DRY = os.environ.get("DRY_RUN") == "1"
-
-TOKEN = os.environ.get("META_PAGE_TOKEN", "")
-PAGE_ID = os.environ.get("FB_PAGE_ID", "")
-IG_ID = os.environ.get("IG_USER_ID", "")
-NTFY = os.environ.get("NTFY_TOPIC", "")
+ONLY = os.environ.get("ONLY_POST", "").strip()   # run a single post id (manual test)
+ONLY_PLATS = [x.strip() for x in os.environ.get("ONLY_PLATFORMS", "").split(",") if x.strip()]
+NTFY = os.environ.get("NTFY_TOPIC", "").strip()
 REPO = os.environ.get("GITHUB_REPOSITORY", "")
+
+PLATFORMS = {
+    "instagram": (meta.configured_ig, meta.publish_ig),
+    "facebook": (meta.configured_fb, meta.publish_fb),
+    "x": (x.configured, x.publish),
+    "tiktok": (tiktok.configured, tiktok.publish),
+    "youtube": (youtube.configured, youtube.publish),
+    "linkedin": (linkedin.configured, linkedin.publish),
+}
 
 
 def now():
-    return dt.datetime.now(TZ)
-
-
-def load_state():
-    p = ROOT / "state" / "state.json"
-    return json.loads(p.read_text()) if p.exists() else {}
-
-
-def save_state(s):
-    (ROOT / "state" / "state.json").write_text(json.dumps(s, indent=2, sort_keys=True))
+    o = os.environ.get("NOW_OVERRIDE")  # tests only
+    return dt.datetime.fromisoformat(o).replace(tzinfo=TZ) if o else dt.datetime.now(TZ)
 
 
 def push(title, msg, priority="default", tags=""):
     print(f"[push] {title}: {msg}")
     if DRY or not NTFY:
         return
-    headers = {"Title": title.encode("utf-8"), "Priority": priority}
+    h = {"Title": title.encode("utf-8"), "Priority": priority}
     if tags:
-        headers["Tags"] = tags
+        h["Tags"] = tags
     if REPO:
-        headers["Click"] = f"https://github.com/{REPO}/blob/main/schedule.yaml"
-    requests.post(f"https://ntfy.sh/{NTFY}", data=msg.encode("utf-8"), headers=headers, timeout=30)
-
-
-def check(r):
+        h["Click"] = f"https://github.com/{REPO}/blob/main/schedule.yaml"
     try:
-        j = r.json()
-    except Exception:
-        j = {"raw": r.text[:500]}
-    if r.status_code >= 400 or (isinstance(j, dict) and "error" in j):
-        raise RuntimeError(f"{r.status_code} {json.dumps(j)[:500]}")
-    return j
+        requests.post(f"https://ntfy.sh/{NTFY}", data=msg.encode("utf-8"), headers=h, timeout=30)
+    except Exception as e:
+        print(f"[push] failed: {e}")
 
 
-# ---------------- Instagram Reels (resumable upload) ----------------
-def publish_ig(video: Path, caption: str, ai_label: bool, first_comment: str):
-    j = check(requests.post(f"{GRAPH}/{IG_ID}/media", data={
-        "media_type": "REELS", "upload_type": "resumable", "caption": caption,
-        "share_to_feed": "true", "is_ai_generated": "true" if ai_label else "false",
-        "access_token": TOKEN}, timeout=60))
-    cid = j["id"]
-    data = video.read_bytes()
-    check(requests.post(f"{RUPLOAD}/ig-api-upload/v25.0/{cid}", data=data, headers={
-        "Authorization": f"OAuth {TOKEN}", "offset": "0", "file_size": str(len(data))}, timeout=300))
-    for _ in range(60):  # wait up to ~10 min for processing
-        s = check(requests.get(f"{GRAPH}/{cid}", params={
-            "fields": "status_code,status", "access_token": TOKEN}, timeout=30))
-        if s.get("status_code") == "FINISHED":
-            break
-        if s.get("status_code") == "ERROR":
-            raise RuntimeError(f"IG processing error: {s}")
-        time.sleep(10)
-    else:
-        raise RuntimeError("IG processing timed out")
-    pub = check(requests.post(f"{GRAPH}/{IG_ID}/media_publish", data={
-        "creation_id": cid, "access_token": TOKEN}, timeout=60))
-    media_id = pub["id"]
-    if first_comment:
-        check(requests.post(f"{GRAPH}/{media_id}/comments", data={
-            "message": first_comment, "access_token": TOKEN}, timeout=60))
-    link = check(requests.get(f"{GRAPH}/{media_id}", params={
-        "fields": "permalink", "access_token": TOKEN}, timeout=30)).get("permalink", "")
-    return {"id": media_id, "url": link}
-
-
-# ---------------- Facebook Page Reels ----------------
-def publish_fb(video: Path, caption: str, first_comment: str):
-    j = check(requests.post(f"{GRAPH}/{PAGE_ID}/video_reels", data={
-        "upload_phase": "start", "access_token": TOKEN}, timeout=60))
-    vid = j["video_id"]
-    data = video.read_bytes()
-    check(requests.post(f"{RUPLOAD}/video-upload/v25.0/{vid}", data=data, headers={
-        "Authorization": f"OAuth {TOKEN}", "offset": "0", "file_size": str(len(data)),
-        "Content-Type": "application/octet-stream"}, timeout=300))
-    check(requests.post(f"{GRAPH}/{PAGE_ID}/video_reels", data={
-        "upload_phase": "finish", "video_id": vid, "video_state": "PUBLISHED",
-        "description": caption, "access_token": TOKEN}, timeout=60))
-    post_id = None
-    for _ in range(36):  # wait up to ~6 min for the reel to go live
-        s = check(requests.get(f"{GRAPH}/{vid}", params={
-            "fields": "status,post_id,permalink_url", "access_token": TOKEN}, timeout=30))
-        st = (s.get("status") or {})
-        if st.get("video_status") == "error":
-            raise RuntimeError(f"FB processing error: {s}")
-        post_id = s.get("post_id")
-        if (st.get("publishing_phase") or {}).get("status") == "complete" and post_id:
-            break
-        time.sleep(10)
-    if first_comment and post_id:
-        check(requests.post(f"{GRAPH}/{post_id}/comments", data={
-            "message": first_comment, "access_token": TOKEN}, timeout=60))
-    return {"id": vid, "post_id": post_id, "url": f"https://www.facebook.com/reel/{vid}"}
-
-
-def due_time(p):
-    return dt.datetime.strptime(f"{p['date']} {p['time']}", "%Y-%m-%d %H:%M").replace(tzinfo=TZ)
+def due(post, plat):
+    t = (post["platforms"].get(plat) or {}).get("time") or post["time"]
+    return dt.datetime.strptime(f"{post['date']} {t}", "%Y-%m-%d %H:%M").replace(tzinfo=TZ)
 
 
 def main():
     sched = yaml.safe_load((ROOT / "schedule.yaml").read_text()) or {}
-    posts = sched.get("posts", [])
-    state = load_state()
-    t = now()
-    changed = False
+    posts = sched.get("posts") or []
+    problems = validate(posts, ROOT)
+    state_p = ROOT / "state" / "state.json"
+    state = json.loads(state_p.read_text()) if state_p.exists() else {}
+    t, changed = now(), False
 
     for p in posts:
         pid = p["id"]
-        st = state.setdefault(pid, {})
-        when = due_time(p)
-        mins = (when - t).total_seconds() / 60
-        video = ROOT / p["video"]
-        plats = [x for x in p.get("platforms", []) if x in ("instagram", "facebook")]
-        if p.get("paused"):
+        if ONLY and pid != ONLY:
             continue
+        if p.get("paused") or not p.get("approved"):
+            continue
+        st = state.setdefault(pid, {"headsup": {}, "results": {}})
+        if problems.get(pid):
+            if not st.get("invalid_alert"):
+                push(f"BLOCKED: {p['title']}", "Fix schedule.yaml:\n" + "\n".join(problems[pid]), "high", "no_entry")
+                st["invalid_alert"] = True
+                changed = True
+            continue
+        video = ROOT / p["video"]
 
-        # 1) heads-up ~1 hour before
-        if 0 < mins <= HEADS_UP_MIN + 20 and not st.get("headsup"):
-            problem = "" if video.exists() else " ⚠️ VIDEO FILE MISSING"
-            push(f"In ~{int(mins)} min: {p['title']}",
-                 f"{when:%a %b %d %I:%M %p} CT on {', '.join(plats)}\n"
-                 f"File: {p.get('source_file', p['video'])}{problem}\n"
-                 f"Caption: {p['ig_caption'][:140]}...\n"
-                 f"Reply to Claude 'STOP {pid}' or 'swap {pid}' to change it.",
-                 tags="alarm_clock")
-            st["headsup"] = t.isoformat()
-            changed = True
+        # group platforms by time slot
+        slots = {}
+        for plat in p["platforms"]:
+            if plat in PLATFORMS and (not ONLY_PLATS or plat in ONLY_PLATS):
+                slots.setdefault(due(p, plat), []).append(plat)
 
-        # 2) publish when due
-        if mins <= 0 and not st.get("done"):
-            if -mins > LATE_LIMIT_MIN:
-                if not st.get("late_alert"):
-                    push(f"MISSED: {p['title']}", f"{pid} was due {when:%I:%M %p} and was not posted. Not auto-posting this late.", "high", "warning")
-                    st["late_alert"] = True
+        for when, plats in sorted(slots.items()):
+            key = when.strftime("%H:%M")
+            mins = (when - t).total_seconds() / 60
+
+            # 1) heads-up
+            if (ONLY or mins <= HEADS_UP_MIN + 20) and key not in st["headsup"] and -mins + 50 <= LATE_LIMIT_MIN:
+                auto = [x for x in plats if PLATFORMS[x][0]()]
+                manual = [x for x in plats if x not in auto]
+                goes = max(when, t + dt.timedelta(minutes=50)) if not ONLY else t
+                lines = [f"{goes:%a %b %d %I:%M %p} CT", f"File: {p.get('source_file', p['video'])}"]
+                if auto:
+                    lines.append("Auto-posting: " + ", ".join(auto))
+                if manual:
+                    lines.append("Not automated (native schedule / manual): " + ", ".join(manual))
+                lines.append(f"To stop: set paused: true on {pid} in schedule.yaml, or tell Claude 'STOP {pid}'.")
+                push(f"In ~{int((goes - t).total_seconds() // 60)} min: {p['title']}", "\n".join(lines), tags="alarm_clock")
+                st["headsup"][key] = t.isoformat()
+                changed = True
+
+            pending = [x for x in plats if x not in st["results"] and PLATFORMS[x][0]()]
+            if not pending:
+                continue
+            if -mins > LATE_LIMIT_MIN and not ONLY:
+                if not st.get(f"late_{key}"):
+                    push(f"MISSED: {p['title']}", f"{key} slot ({', '.join(pending)}) was not posted. Not auto-posting 3h+ late.", "high", "warning")
+                    st[f"late_{key}"] = True
                     changed = True
                 continue
-            results, errors = st.setdefault("results", {}), []
+            # 2) publish: only when due AND Grayson has had his heads-up for 50+ min
+            #    (a post added late gets its heads-up now and goes out ~50 min later).
+            warned = dt.datetime.fromisoformat(st["headsup"][key]) if key in st["headsup"] else None
+            if not ONLY and (mins > 0 or warned is None or (t - warned).total_seconds() < 50 * 60):
+                continue
+            ok, errors, actions = [], [], []
             for plat in plats:
-                if plat in results:
+                if plat in st["results"] or not PLATFORMS[plat][0]():
                     continue
+                cfg = p["platforms"][plat]
                 try:
-                    if DRY:
-                        results[plat] = {"dry": True}
-                    elif plat == "instagram":
-                        results[plat] = publish_ig(video, p["ig_caption"], p.get("ai_label", False), p.get("ig_first_comment", ""))
-                    elif plat == "facebook":
-                        results[plat] = publish_fb(video, p.get("fb_caption", p["ig_caption"]), p.get("fb_first_comment", ""))
-                except Exception as e:  # keep going; alert at the end
+                    res = {"dry": True} if DRY else PLATFORMS[plat][1](video, p, cfg)
+                    res["at"] = now().isoformat()
+                    st["results"][plat] = res
+                    ok.append(f"{plat}: {res.get('url', 'done')}")
+                    if res.get("action"):
+                        actions.append(f"{plat}: {res['action']}")
+                except Exception as e:
                     errors.append(f"{plat}: {e}")
+                    st.setdefault("errors", []).append(f"{now():%m-%d %H:%M} {plat}: {str(e)[:300]}")
                 changed = True
+            if actions:
+                push(f"ACTION NEEDED: {p['title']}", "\n".join(actions), "high", "point_right")
+            if ok:
+                push(f"Posted: {p['title']}", "\n".join(ok), tags="white_check_mark")
             if errors:
-                st["errors"] = errors
-                push(f"POST FAILED: {p['title']}", "\n".join(errors)[:900], "high", "warning")
-            else:
-                st["done"] = t.isoformat()
-                links = "\n".join(f"{k}: {v.get('url','')}" for k, v in results.items())
-                push(f"Posted: {p['title']}", links or "done", tags="white_check_mark")
+                push(f"POST FAILED: {p['title']}", "\n".join(errors)[:900], "urgent", "warning")
 
-    if changed:
-        save_state(state)
+    if changed and (not DRY or os.environ.get("DRY_SAVE_STATE") == "1"):   # dry runs never touch state
+        state_p.parent.mkdir(exist_ok=True)
+        state_p.write_text(json.dumps(state, indent=2, sort_keys=True))
     return 0
 
 

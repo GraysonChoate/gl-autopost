@@ -2,13 +2,19 @@ name: autopost
 
 on:
   schedule:
-    # every 15 min, 11:00-20:45 UTC (5 AM - 2:45 PM CT). GitHub may delay a few minutes.
+    # every 15 min, 11:00-20:45 UTC (5 AM - 2:45 PM CT in winter). GitHub may run a few minutes late.
     - cron: "*/15 11-20 * * *"
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Dry run (no posting)"
-        default: "0"
+        description: "Dry run (1 = no posting)"
+        default: "1"
+      only_post:
+        description: "Post ONE schedule id right now (test). Leave blank for normal run."
+        default: ""
+      only_platforms:
+        description: "Limit to platforms, comma list (e.g. instagram,facebook). Blank = all."
+        default: ""
 
 permissions:
   contents: write
@@ -20,24 +26,45 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install requests pyyaml
+      - run: pip install requests pyyaml requests_oauthlib
+      - name: Check schedule
+        run: python validate.py || true   # autopost.py blocks bad posts and pushes an alert
       - name: Heads-up + publish
         env:
+          DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
+          ONLY_POST: ${{ github.event.inputs.only_post }}
+          ONLY_PLATFORMS: ${{ github.event.inputs.only_platforms }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           META_PAGE_TOKEN: ${{ secrets.META_PAGE_TOKEN }}
           FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
-          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
-          DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
+          TIKTOK_CLIENT_KEY: ${{ secrets.TIKTOK_CLIENT_KEY }}
+          TIKTOK_CLIENT_SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
+          TIKTOK_REFRESH_TOKEN: ${{ secrets.TIKTOK_REFRESH_TOKEN }}
+          TIKTOK_DIRECT_OK: ${{ secrets.TIKTOK_DIRECT_OK }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          YOUTUBE_VERIFIED: ${{ secrets.YOUTUBE_VERIFIED }}
+          LI_CLIENT_ID: ${{ secrets.LI_CLIENT_ID }}
+          LI_CLIENT_SECRET: ${{ secrets.LI_CLIENT_SECRET }}
+          LI_REFRESH_TOKEN: ${{ secrets.LI_REFRESH_TOKEN }}
+          LI_ACCESS_TOKEN: ${{ secrets.LI_ACCESS_TOKEN }}
         run: python autopost.py
       - name: Save state
+        if: always()
         run: |
           git config user.name "gl-autopost"
           git config user.email "autopost@users.noreply.github.com"
           git add state/state.json 2>/dev/null || true
-          git diff --cached --quiet || (git commit -m "state: $(date -u +%FT%TZ)" && git push)
+          git diff --cached --quiet || (git commit -m "state: $(date -u +%FT%TZ)" && git pull --rebase && git push)

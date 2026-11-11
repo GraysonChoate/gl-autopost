@@ -1,11 +1,23 @@
-# Grounded Labs autopost schedule (Instagram + Facebook Reels).
-# Times are America/Chicago. To pause a post: add `paused: true`.
-# To swap the video: replace the file in videos/ (same name) or change `video:`.
-# Nov 12-19 are already scheduled natively in Meta Business Suite — do NOT add them here.
+# Grounded Labs autopost schedule. Times are America/Chicago, "HH:MM" in quotes.
+# APPROVAL: a post only goes out when `approved: true` (Grayson's OK). Pause any time: `paused: true`.
+# Nov 12-19 are already scheduled natively on every platform. Do NOT add them here.
+# Platforms whose API isn't live yet are skipped and shown as "manual" in the heads-up.
 #
-# Fields:
-#   id, title, date (YYYY-MM-DD), time (HH:MM 24h), platforms [instagram, facebook]
-#   video (path in repo), source_file (name on Grayson's Mac, for the heads-up)
-#   ig_caption, fb_caption, ig_first_comment, fb_first_comment, ai_label (true for avatar/AI people)
+# - id: 2026-11-20-every-pdf
+#   title: Every PDF
+#   date: 2026-11-20
+#   time: "12:00"                 # default for every platform
+#   video: videos/every-pdf_vo.mp4
+#   source_file: Social/Explainers/Finals/GL-G-EveryPDF_VO.mp4
+#   ai_label: false               # true only for avatar / AI-person videos
+#   keyword: PDF                  # must match the Meta comment->DM automation
+#   approved: false
+#   platforms:
+#     instagram: { caption: "...", first_comment: "Comment PDF and we'll DM you..." }
+#     facebook:  { caption: "...", first_comment: "Free audit: https://groundedlabs.ai/#start" }
+#     x:         { time: "09:00", text: "..." }
+#     tiktok:    { mode: upload, caption: "..." }   # upload = lands in TikTok inbox, Grayson taps Post
+#     youtube:   { title: "...", description: "..." }
+#     linkedin:  { time: "11:30", text: "..." }
 
 posts: []
