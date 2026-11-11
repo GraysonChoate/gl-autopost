@@ -9,6 +9,12 @@ checks = {
     "youtube": (youtube.configured, lambda: youtube.access_token() and "token refresh OK"),
     "linkedin": (linkedin.configured, lambda: linkedin.access_token() and "token OK"),
 }
+import os
+def shape(k):
+    v = os.environ.get(k, "")
+    return f"{k}: len={len(v)} stripped_len={len(v.strip())} has_dash={'-' in v} starts_digit={v[:1].isdigit()}"
+for k in ("X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_SECRET"):
+    print("shape", shape(k))
 for name, (ok, fn) in checks.items():
     if not ok():
         print(f"{name}: not set up")
