@@ -1,0 +1,43 @@
+name: autopost
+
+on:
+  schedule:
+    # every 15 min, 11:00-20:45 UTC (5 AM - 2:45 PM CT). GitHub may delay a few minutes.
+    - cron: "*/15 11-20 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (no posting)"
+        default: "0"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: autopost
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests pyyaml
+      - name: Heads-up + publish
+        env:
+          META_PAGE_TOKEN: ${{ secrets.META_PAGE_TOKEN }}
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
+        run: python autopost.py
+      - name: Save state
+        run: |
+          git config user.name "gl-autopost"
+          git config user.email "autopost@users.noreply.github.com"
+          git add state/state.json 2>/dev/null || true
+          git diff --cached --quiet || (git commit -m "state: $(date -u +%FT%TZ)" && git push)
