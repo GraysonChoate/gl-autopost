@@ -49,3 +49,8 @@ def publish(video, post, cfg):
     j = check(requests.post(f"{API}/tweets", auth=_auth(), json={"text": cfg["text"], "media": {"media_ids": [mid]}}, timeout=60))
     tid = j["data"]["id"]
     return {"id": tid, "url": f"https://x.com/groundedlabs_ai/status/{tid}"}
+
+
+def whoami():
+    """Cheap auth check (no post). Returns the @username the keys belong to."""
+    return check(requests.get(f"{API}/users/me", auth=_auth(), timeout=30))["data"]["username"]

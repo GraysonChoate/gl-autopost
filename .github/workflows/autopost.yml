@@ -12,6 +12,9 @@ on:
       only_post:
         description: "Post ONE schedule id right now (test). Leave blank for normal run."
         default: ""
+      check_keys:
+        description: "1 = only check API keys (posts nothing)"
+        default: "0"
       only_platforms:
         description: "Limit to platforms, comma list (e.g. instagram,facebook). Blank = all."
         default: ""
@@ -60,7 +63,8 @@ jobs:
           LI_CLIENT_SECRET: ${{ secrets.LI_CLIENT_SECRET }}
           LI_REFRESH_TOKEN: ${{ secrets.LI_REFRESH_TOKEN }}
           LI_ACCESS_TOKEN: ${{ secrets.LI_ACCESS_TOKEN }}
-        run: python autopost.py
+        run: |
+          if [ "${{ github.event.inputs.check_keys }}" = "1" ]; then python check_auth.py; else python autopost.py; fi
       - name: Save state
         if: always()
         run: |
