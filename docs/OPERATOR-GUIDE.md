@@ -10,7 +10,8 @@ You run Grounded Labs' posting. Grayson hands you **content** (video + caption).
 Every **Thursday**, load next Mon–Sun.
 1. **Get content from Grayson**: video file + caption (+ keyword like AUDIT/PDF/FIX).
 2. **Upload the video**: repo → `videos/` folder → **Add file → Upload files** → drop the .mp4 → *Commit changes*.
-   - Name it lowercase-with-dashes: `every-pdf.mp4`. Under 100 MB (GitHub web limit 25 MB per file in browser — if bigger, ask Grayson/Claude to compress).
+   - Name it lowercase-with-dashes: `every-pdf.mp4`.
+   - **Must be under 25 MB** (GitHub's browser upload limit). Bigger? Run it through free **HandBrake** → preset *Fast 1080p30* → audio AAC 128 kbps, or ask Claude to compress it.
 3. **Add the post**: open `schedule.yaml` → pencil (Edit) → paste the block from `templates/post.yaml` under `posts:` → fill it in → *Commit changes*.
    - A green check appears on the commit within ~1 min = schedule is valid. Red X = open it, it says exactly what's wrong (missing file, banned word, caption too long, link on X).
 4. **Get the OK**: send Grayson the title/date/caption. When he says yes, change `approved: false` → `approved: true` and commit. **Nothing posts without this.**
