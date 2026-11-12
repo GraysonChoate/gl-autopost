@@ -1,5 +1,7 @@
 # gl-autopost
 
+**Running the posting? Start here: [docs/OPERATOR-GUIDE.md](docs/OPERATOR-GUIDE.md)** · Template for a new post: [templates/post.yaml](templates/post.yaml)
+
 Grounded Labs' own posting system (replaces paid schedulers). Runs free on GitHub Actions.
 
 | File | What it does |

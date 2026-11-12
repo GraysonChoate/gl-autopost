@@ -1,0 +1,18 @@
+# COPY THIS BLOCK into schedule.yaml under `posts:` (keep the leading "- " and the spacing).
+# Replace every <...>. Times are Central, in quotes, 24-hour ("12:00" = noon, "09:00" = 9 AM).
+- id: <YYYY-MM-DD-short-name>          # e.g. 2026-11-21-every-pdf  (must be unique)
+  title: <Short title>
+  date: <YYYY-MM-DD>
+  time: "12:00"                         # IG, FB, TikTok, YouTube
+  video: videos/<file-name>.mp4         # the file you uploaded into videos/
+  source_file: <where Grayson's original lives, e.g. Social/Explainers/Finals/GL-G-EveryPDF_VO.mp4>
+  ai_label: false                       # true ONLY if an AI person/avatar is on screen
+  keyword: <AUDIT>                      # the comment keyword in the caption
+  approved: false                       # flip to true when Grayson OKs it. Nothing posts until then.
+  platforms:
+    instagram: { caption: "<caption + hashtags>", first_comment: "" }
+    facebook:  { caption: "<caption>", first_comment: "Free audit: https://groundedlabs.ai/#start" }
+    x:         { time: "09:00", text: "<under 280 chars, NO links (links cost 13x). Say 'link in bio'>" }
+    tiktok:    { mode: upload, caption: "<caption + hashtags>" }
+    youtube:   { title: "<under 100 chars>", description: "<caption + https://groundedlabs.ai/#start>" }
+    linkedin:  { time: "11:30", text: "<caption + link>" }
